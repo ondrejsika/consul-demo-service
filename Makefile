@@ -1,4 +1,4 @@
-VERSION = 1
+VERSION = 2
 IMAGE = ondrejsika/consul-demo-service:$(VERSION)
 CONTAINER = consul-demo-service
 

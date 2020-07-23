@@ -12,6 +12,27 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	promRequestsRoot = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "requests_root_total",
+		Help: "Number of request to / endpoint.",
+	})
+	promRequestsLivez = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "requests_livez_total",
+		Help: "Number of request to /livez endpoint.",
+	})
+	promRequestsRefresh = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "requests_refresh_total",
+		Help: "Number of request to /refresh endpoint.",
+	})
+	promRefresh = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "refresh_total",
+		Help: "Number of all config refreshs (time based + api).",
+	})
 )
 
 type state struct {
@@ -33,6 +54,7 @@ func reloadConfig(s *state, kv *api.KV, region string, serviceID string) {
 	if pair != nil {
 		s.message = string(pair.Value)
 	}
+	promRefresh.Inc()
 }
 
 func registerServiceWithConsul(client *api.Client, host string, port int, serviceID string) {
@@ -41,6 +63,7 @@ func registerServiceWithConsul(client *api.Client, host string, port int, servic
 		Name:    "consul-demo-service",
 		Address: host,
 		Port:    port,
+		Tags:    []string{"prometheus"},
 		Check: &api.AgentServiceCheck{
 			HTTP:     "http://" + host + ":" + strconv.Itoa(port) + "/livez",
 			Interval: "5s",
@@ -91,6 +114,11 @@ func main() {
 	port := getPort()
 	s := state{"default"}
 
+	prometheus.MustRegister(promRequestsRoot)
+	prometheus.MustRegister(promRequestsLivez)
+	prometheus.MustRegister(promRequestsRefresh)
+	prometheus.MustRegister(promRefresh)
+
 	client, err := api.NewClient(api.DefaultConfig())
 	if err != nil {
 		panic(err)
@@ -118,6 +146,7 @@ func main() {
 		fmt.Fprintf(w, "["+serviceID+"] ")
 		fmt.Fprintf(w, s.message)
 		fmt.Fprintf(w, "\n")
+		promRequestsRoot.Inc()
 		log.Println("[http] /")
 	})
 
@@ -125,13 +154,17 @@ func main() {
 		log.Println("[main] Reload config (http)")
 		reloadConfig(&s, kv, region, serviceID)
 		fmt.Fprintf(w, "OK\n")
+		promRequestsRefresh.Inc()
 		log.Println("[http] /refresh")
 	})
 
 	http.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "OK\n")
+		promRequestsLivez.Inc()
 		log.Println("[http] /livez")
 	})
+
+	http.Handle("/metrics", promhttp.Handler())
 
 	log.Println("[main] ServiceID:", serviceID)
 	log.Println("[main] Port:", port)
